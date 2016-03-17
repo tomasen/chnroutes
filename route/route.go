@@ -20,15 +20,17 @@ type apnicData struct { //建立了一个apnic结构，结构包括一个字符�
 	maskNum int
 }
 
-var ( //全局变量   platform为字符串    metric为整型
+var ( //全局变量   platform为字符串    metric为整型 region为字符串
 	platform string
 	metric   int
+	region   string
 )
 
 func init() { //定义了一个有指定名字“p”，默认值为“openvpn”，用法说明标签为“Target.....”的string标签，参数&platform指向一个存储标签解析值的string变量
 	flag.StringVar(&platform, "p", "openvpn", "Target platforms, it can be openvpn, mac, linux,win, android. openvpn by default.")
 	//定义了一个有指定名字“m”，默认值为5，用法说明标签为“Metric.....”的int标签，参数&mertic指向一个存储标签解析值的int变量
 	flag.IntVar(&metric, "m", 5, "Metric setting for the route rules")
+	flag.StringVar(&region, "r", "not-asia", "Target regions,it can be not-asia,asia,china.not-asia by default ")
 }
 
 func main() {
@@ -39,11 +41,15 @@ func main() {
 		"win":     generate_win,
 		"android": generate_android,
 	}
-
+	area := map[string]string{
+		"not-asia": reg_comp_na,
+		"asia":     reg_comp_as,
+		"china":    reg_comp_cn,
+	}
 	flag.Parse()                             //从参数os.Args[1:]中解析命令行标签。 这个方法调用时间点必须在FlagSet的所有标签都定义之后，程序访问这些标签之前。
 	if fun := router[platform]; fun != nil { //fun为函数generate_open、linux、mac、win、android中的一种，由输入的参数所决定  假设用的是open
-		data := fetch_ip_data() //data为函数返回的anpicData结构数组results
-		fun(data)               //假设用的mac设备，则将data数组传递给函数generate_mac
+		data := fetch_ip_data(area) //data为函数返回的anpicData结构数组results
+		fun(data)                   //假设用的mac设备，则将data数组传递给函数generate_mac
 	} else {
 		fmt.Printf("Platform %s is not supported.\n", platform)
 	}
@@ -138,7 +144,7 @@ func generate_android(data []apnicData) {
 	fmt.Println("Old school way to call up/down script from openvpn client. use the regular openvpn 2.1 method to add routes if it's possible")
 }
 
-func fetch_ip_data() []apnicData {
+func fetch_ip_data(area map[string]string) []apnicData {
 	// fetch data from apnic
 	fmt.Println("Fetching data from apnic.net, it might take a few minutes, please wait...") //输出等待
 	url := "http://ftp.apnic.net/apnic/stats/apnic/delegated-apnic-latest"                   //url设为字符串变量
@@ -150,7 +156,7 @@ func fetch_ip_data() []apnicData {
 	defer resp.Body.Close() //在返回函数钱关闭resp.Body
 	//正则表达式：将( 和 ) 之间的表达式定义为“组”（group），并且将匹配这个表达式的字符保存到一个临时区域（一个正则表达式中最多可以保存9个），它们可以用 \1 到\9 的符号来引用。
 	br := bufio.NewReader(resp.Body) //resp.Body为io.Reader型，br为*Reader型
-	var reg = regexp.MustCompile(reg_comp)
+	var reg = regexp.MustCompile(area[region])
 	//设置正则表达是，符合｀｀内的表达式
 	results := make([]apnicData, 0) //创建一个名为results的apnicData数组
 	for {                           //死循环
@@ -292,4 +298,6 @@ OLDGW=$(netstat -rn | grep ^0\.0\.0\.0 | awk '{print $2}')
 var android_downscript_header string = `#!/bin/sh
 alias route='/system/xbin/busybox route'
 `
-var reg_comp string = `apnic\|(AU|BR|CK|CO|DE|ES|FJ|FM|GB|GN|GU|KE|KI|MH|MP|MU|NC|NE|NF|NI|NR|NU|NZ|PF|PG|PN|PW|SB|SE|SI|SN|TK|TO|TV|US|VU|WF|WS|ZA)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
+var reg_comp_na string = `apnic\|(AU|BR|CK|CO|DE|ES|FJ|FM|GB|GN|GU|KE|KI|MH|MP|MU|NC|NE|NF|NI|NR|NU|NZ|PF|PG|PN|PW|SB|SE|SI|SN|TK|TO|TV|US|VU|WF|WS|ZA)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
+var reg_comp_as string = `apnic\|(MN|KP|KR|JP|VN|LA|KH|TH|MM|MY|SG|ID|BN|PH|TL|IN|BD|BT|NP|PK|LK|MV|SA|AE|TR|LB|IQ|IR|AF)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
+var reg_comp_cn string = `apnic\|(CN)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
