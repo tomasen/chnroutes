@@ -57,7 +57,12 @@ func main() {
 }
 
 // remove address list use `/ip firewall address-list remove [/ip firewall address-list find list="chnroutes"]`
-// add list use /ip firewall address-list add list=drop_traffic address=192.0.34.166/32
+/*
+/ip firewall address-list add list=chnroutes address=10.0.0.0/8
+/ip firewall address-list add list=chnroutes address=172.16.0.0/12
+/ip firewall address-list add list=chnroutes address=192.168.0.0/16
+*/
+
 func generate_routeos(data []apnicData) {
 	fp := safeCreateFile("routes.txt")
 	defer fp.Close()         //最后当函数关闭之前将创建的文件关闭
