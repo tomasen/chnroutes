@@ -40,6 +40,7 @@ func main() {
 		"mac":     generate_mac,
 		"win":     generate_win,
 		"android": generate_android,
+		"routeos": generate_routeos,
 	}
 	area := map[string]string{
 		"not-asia": reg_comp_na,
@@ -52,6 +53,17 @@ func main() {
 		fun(data)                   //假设用的mac设备，则将data数组传递给函数generate_mac
 	} else {
 		fmt.Printf("Platform %s is not supported.\n", platform)
+	}
+}
+
+// remove address list use `/ip firewall address-list remove [/ip firewall address-list find list="chnroutes"]`
+// add list use /ip firewall address-list add list=drop_traffic address=192.0.34.166/32
+func generate_routeos(data []apnicData) {
+	fp := safeCreateFile("routes.txt")
+	defer fp.Close()         //最后当函数关闭之前将创建的文件关闭
+	for _, v := range data { //遍历数组data，将内容放入v  route_item是格式为route 首地址(string型) mask(net.ip型的String方法将其转为字符串) mertic(int)
+		route_item := fmt.Sprintf("/ip firewall address-list add list=%s address=%s/%d\n", region, v.startIp, v.maskNum)
+		fp.WriteString(route_item) //每次循环都将route_item写入到生成的文件中
 	}
 }
 
