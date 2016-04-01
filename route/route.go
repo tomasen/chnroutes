@@ -20,6 +20,15 @@ type apnicData struct { //建立了一个apnic结构，结构包括一个字符�
 	maskNum int
 }
 
+const (
+	classA_StartIp = uint32(184549376)
+	classB_StartIp = uint32(2886729728)
+	classC_StartIp = uint32(3232235520)
+	classA_EndIp   = uint32(184549376)
+	classB_EndIp   = uint32(2887778304)
+	classC_EndIp   = uint32(3232301056)
+)
+
 var ( //全局变量   platform为字符串    metric为整型 region为字符串
 	platform string
 	metric   int
@@ -170,44 +179,227 @@ func fetch_ip_data(area map[string]string) []apnicData {
 		fmt.Println(err.Error())
 		os.Exit(-1)
 	}
-	defer resp.Body.Close() //在返回函数钱关闭resp.Body
+	results := make([]apnicData, 0) //创建一个名为results的apnicData数组
+	defer resp.Body.Close()         //在返回函数钱关闭resp.Body
 	//正则表达式：将( 和 ) 之间的表达式定义为“组”（group），并且将匹配这个表达式的字符保存到一个临时区域（一个正则表达式中最多可以保存9个），它们可以用 \1 到\9 的符号来引用。
 	br := bufio.NewReader(resp.Body) //resp.Body为io.Reader型，br为*Reader型
-	var reg = regexp.MustCompile(area[region])
-	//设置正则表达是，符合｀｀内的表达式
-	results := make([]apnicData, 0) //创建一个名为results的apnicData数组
-	for {                           //死循环
-		line, isPrefix, err := br.ReadLine() //读一行文本，将内容赋给line
-		if err != nil {                      //如果有报错
-			if err != io.EOF { //如果错误信息不是读到文件末
-				fmt.Println(err.Error()) //输出错误信息
-				os.Exit(-1)              //退出
+	if region != "not-asia" {
+		var reg = regexp.MustCompile(area[region]) //设置正则表达是，符合｀｀内的表达式
+		for {                                      //死循环
+			line, isPrefix, err := br.ReadLine() //读一行文本，将内容赋给line
+			if err != nil {                      //如果有报错
+				if err != io.EOF { //如果错误信息不是读到文件末
+					fmt.Println(err.Error()) //输出错误信息
+					os.Exit(-1)              //退出
+				}
+				break //如果是读到尾部，退出循环
 			}
-			break //如果是读到尾部，退出循环
+			if isPrefix { //如果一行内容超出上限
+				fmt.Println("You should not see this!") //输出“你不该看到这个”
+				return results                          //返回results
+			}
+			matches := reg.FindStringSubmatch(string(line)) //matches是一个字符串数组，返回了符合之前正则表达式里面的完整匹配项和子匹配项（每个（）所符合的内容）
+			if len(matches) != 6 {                          //如果matches的长度不等于6则跳过本次循环
+				continue
+			}
+			starting_ip := matches[2]   //首地址为第三个读出的内容，即第二个子匹配项的ip地址，以字符串形式赋给starting_ip
+			if Ispravite(starting_ip) { //下面对抓取出来的ip地址进行判断是否为私有地址
+				continue
+			}
+			num_ip, _ := strconv.Atoi(matches[3])                              //ip的数量为第四个读出，即第三个子匹配项的内容，将其转为int形式赋给num_ip
+			imask := UintToIP(0xffffffff ^ uint32(num_ip-1))                   //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
+			imaskNum := 32 - int(math.Log2(float64(num_ip)))                   //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
+			results = append(results, apnicData{starting_ip, imask, imaskNum}) //将所得到的首地址、imask、imask数量构成一个apnicData结构加到results
 		}
-
-		if isPrefix { //如果一行内容超出上限
-			fmt.Println("You should not see this!") //输出“你不该看到这个”
-			return results                          //返回results
+	} else if region == "not-asia" {
+		cur_StartIp := uint32(0)                   //当前的首地址
+		cur_EndIp := uint32(0)                     //当前的末地址
+		last_Ip := uint32(0)                       //由于最后一次循环是由搜到的Ip作为末地址，并没有遍历0.0.0.0～255.255.255.255，所以设置一个变量用于记录循环时最后一个搜到Ip的末地址，以此来进行遍历
+		var reg = regexp.MustCompile(area[region]) //设置正则表达是，符合｀｀内的表达式
+		com_pro := 0                               //上次循环时所处的地址段,0表示在10.0.0.0之前，1表示在10.0.0.0和172.16.0.0之间，2表示在172.16.0.0和192.168.0.0之间，4表示在192.168.0.0之后
+		com_cur := 0                               //本次循环时首地址的地址段
+		for {                                      //死循环
+			cur_StartIp = last_Ip
+			line, isPrefix, err := br.ReadLine() //读一行文本，将内容赋给line
+			if err != nil {                      //如果有报错
+				if err != io.EOF { //如果错误信息不是读到文件末
+					fmt.Println(err.Error()) //输出错误信息
+					os.Exit(-1)              //退出
+				}
+				break //如果是读到尾部，退出循环
+			}
+			if isPrefix { //如果一行内容超出上限
+				fmt.Println("You should not see this!") //输出“你不该看到这个”
+				return results                          //返回results
+			}
+			matches := reg.FindStringSubmatch(string(line)) //not-asia的匹配项为asia，但是在国籍中加上了CN
+			if len(matches) != 6 {                          //如果matches的长度不等于6则跳过本次循环
+				continue
+			}
+			if Ispravite(matches[2]) { //下面对抓取出来的ip地址进行判断是否为私有地址，因为对跨越私有段有额外处理，所以依旧进行该判定
+				continue
+			}
+			fetch_ip := matches[2] //首地址为第三个读出的内容，即第二个子匹配项的ip地址，以字符串形式赋给starting_ip
+			switch privateclass(fetch_ip) {
+			case "n": //classA之前
+				com_cur = 0
+			case "a": //classA之后
+				com_cur = 1
+			case "b": //classB之后
+				com_cur = 2
+			case "c": //classC之后
+				com_cur = 3
+			}
+			val_Ip := changeIpToInt(fetch_ip)
+			x, _ := strconv.Atoi(matches[3])
+			last_Ip = val_Ip + uint32(x)      //该变量为循环时抓去到的亚洲IP首地址＋ip数，为下次循环时的开始地址
+			if com_pro == 0 && com_cur == 1 { //对2个变量进行判定，如果出现一个变量在私有地址的右边，一个在左边则说明这次循环跨越私有段，对此进行额外的操作。
+				cur_EndIp = classA_StartIp
+				num_ip := cur_EndIp - cur_StartIp
+				starting_ip := getStartingIp(cur_StartIp)
+				imask := UintToIP(0xffffffff ^ uint32(num_ip-1)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
+				imaskNum := 32 - int(math.Log2(float64(num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
+				results = append(results, apnicData{starting_ip, imask, imaskNum})
+				cur_StartIp = classA_EndIp
+			}
+			if com_pro == 1 && com_cur == 2 {
+				cur_EndIp = classB_StartIp
+				num_ip := cur_EndIp - cur_StartIp
+				starting_ip := getStartingIp(cur_StartIp)
+				imask := UintToIP(0xffffffff ^ uint32(num_ip-1)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
+				imaskNum := 32 - int(math.Log2(float64(num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
+				results = append(results, apnicData{starting_ip, imask, imaskNum})
+				cur_StartIp = classB_EndIp
+			}
+			if com_pro == 2 && com_cur == 3 {
+				cur_EndIp = classC_StartIp
+				num_ip := cur_EndIp - cur_StartIp
+				starting_ip := getStartingIp(cur_StartIp)
+				imask := UintToIP(0xffffffff ^ uint32(num_ip-2)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
+				imaskNum := 32 - int(math.Log2(float64(num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
+				results = append(results, apnicData{starting_ip, imask, imaskNum})
+				cur_StartIp = classC_EndIp
+			}
+			cur_EndIp = val_Ip
+			num_ip := cur_EndIp - cur_StartIp
+			if num_ip == 0 { //如果相邻2次读取的IP连续，会导致减法后保留一个ip_num为0的无用项，所以跳过本次循环
+				com_pro = com_cur //本次的结果不保留，但是对上次循环地址进行更新
+				continue
+			}
+			starting_ip := getStartingIp(cur_StartIp)
+			imask := UintToIP(0xffffffff ^ uint32(num_ip-1))
+			imaskNum := 32 - int(math.Log2(float64(num_ip)))
+			results = append(results, apnicData{starting_ip, imask, imaskNum}) //将所得到的首地址、imask、imask数量构成一个apnicData结构加到results
+			com_pro = com_cur                                                  //循环结束时将上次循环的地址段更新，以此来和下次循环的地址段进行比较判定
 		}
-
-		matches := reg.FindStringSubmatch(string(line)) //matches是一个字符串数组，返回了符合之前正则表达式里面的完整匹配项和子匹配项（每个（）所符合的内容）
-		if len(matches) != 6 {                          //如果matches的长度不等于6则跳过本次循环
-			continue
-		}
-
-		starting_ip := matches[2] //首地址为第三个读出的内容，即第二个子匹配项的ip地址，以字符串形式赋给starting_ip
-		//fmt.Printf("%s %v %d\n", starting_ip, imask, imaskNum)
-		//下面对抓取出来的ip地址进行判断是否为私有地址
-		if Ispravite(starting_ip) {
-			continue
-		}
-		num_ip, _ := strconv.Atoi(matches[3])                              //ip的数量为第四个读出，即第三个子匹配项的内容，将其转为int形式赋给num_ip
-		imask := UintToIP(0xffffffff ^ uint32(num_ip-1))                   //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
-		imaskNum := 32 - int(math.Log2(float64(num_ip)))                   //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
-		results = append(results, apnicData{starting_ip, imask, imaskNum}) //将所得到的首地址、imask、imask数量构成一个apnicData结构加到results
+		starting_ip := getStartingIp(last_Ip)
+		num_ip := 4294967295 - last_Ip - 1
+		imask := UintToIP(0xffffffff ^ uint32(num_ip-1))
+		imaskNum := 32 - int(math.Log2(float64(num_ip)))
+		results = append(results, apnicData{starting_ip, imask, imaskNum})
 	}
 	return results //将最后得到的apnicData结构数组results返回
+}
+
+func getStartingIp(cur_StartIp uint32) string {
+	first_int := int(cur_StartIp / uint32(0x1000000))
+	second_int := int((cur_StartIp - uint32(first_int*0x1000000)) / uint32(0x10000))
+	third_int := int((cur_StartIp - uint32(first_int*0x1000000+second_int*0x10000)) / uint32(0x100))
+	fourth_int := int(cur_StartIp - uint32(first_int*0x1000000) - uint32(second_int*0x10000) - uint32(third_int*0x100))
+	first_string := strconv.Itoa(first_int)
+	second_string := strconv.Itoa(second_int)
+	third_string := strconv.Itoa(third_int)
+	fourth_string := strconv.Itoa(fourth_int)
+	starting_ip := first_string + "." + second_string + "." + third_string + "." + fourth_string
+	return starting_ip
+}
+func changeIpToInt(starting_ip string) uint32 { //将ip地址由点分十进制转为一个整数
+	var val_Ip uint32
+	val_ip := []byte(starting_ip) //当前位置ip的值,首先将ip地址转为［］byte型
+	lenIp := len(starting_ip)
+	pos_ip := 0                 //循环取出ip地址每一段时所在的位置
+	first_ip_byte := [3]byte{}  //第一段ip地址的值（［］byte）
+	second_ip_byte := [3]byte{} //第二段ip地址的值（［］byte）
+	third_ip_byte := [3]byte{}  //第三段ip地址的值（［］byte）
+	fourth_ip_byte := [3]byte{} //第四段ip地址的值（［］byte）
+	var first_ip_int int        //第一段ip地址的值（int）
+	var second_ip_int int       //第二段ip地址的值（int）
+	var third_ip_int int        //第三段ip地址的值（int）
+	var fourth_ip_int int       //第四段ip地址的值（int）
+	first := make([]byte, 0, 3)
+	second := make([]byte, 0, 3)
+	third := make([]byte, 0, 3)
+	fourth := make([]byte, 0, 3)
+	for i := 0; val_ip[pos_ip] >= '0' && val_ip[pos_ip] <= '9'; pos_ip++ {
+		first_ip_byte[i] = val_ip[pos_ip]
+		first = append(first, first_ip_byte[i])
+		i++
+	}
+	pos_ip++
+	for i := 0; val_ip[pos_ip] >= '0' && val_ip[pos_ip] <= '9'; pos_ip++ {
+		second_ip_byte[i] = val_ip[pos_ip]
+		second = append(second, second_ip_byte[i])
+		i++
+	}
+	pos_ip++
+	for i := 0; val_ip[pos_ip] >= '0' && val_ip[pos_ip] <= '9'; pos_ip++ {
+		third_ip_byte[i] = val_ip[pos_ip]
+		third = append(third, third_ip_byte[i])
+		i++
+	}
+	pos_ip++
+	for i := 0; val_ip[pos_ip] >= '0' && val_ip[pos_ip] <= '9'; {
+		fourth_ip_byte[i] = val_ip[pos_ip]
+		fourth = append(fourth, fourth_ip_byte[i])
+		i++
+		pos_ip++
+		if pos_ip == lenIp {
+			break
+		}
+	}
+	first_ip_int, _ = strconv.Atoi(string(first))
+	second_ip_int, _ = strconv.Atoi(string(second))
+	third_ip_int, _ = strconv.Atoi(string(third))
+	fourth_ip_int, _ = strconv.Atoi(string(fourth))
+	val_Ip = uint32(first_ip_int*0x1000000 + second_ip_int*0x10000 + third_ip_int*0x100 + fourth_ip_int)
+	return val_Ip
+}
+func privateclass(starting_ip string) string { //ip地址为0.0.0.0～10.0.0.0返回n
+	val_ip := []byte(starting_ip) //当前位置ip的值,首先将ip地址转为［］byte型
+	pos_ip := 0                   //循环取出ip地址每一段时所在的位置
+	first_ip_byte := [3]byte{}    //第一段ip地址的值（［］byte）
+	second_ip_byte := [3]byte{}   //第二段ip地址的值（［］byte）
+	var first_ip_int int          //第一段ip地址的值（int）
+	var second_ip_int int         //第二段ip地址的值（int）
+	var f []byte
+	var s []byte
+	for i := 0; val_ip[pos_ip] >= '0' && val_ip[pos_ip] <= '9'; pos_ip++ {
+		first_ip_byte[i] = val_ip[pos_ip]
+		f = append(f, first_ip_byte[i])
+		i++
+	}
+	pos_ip++
+	for i := 0; val_ip[pos_ip] >= '0' && val_ip[pos_ip] <= '9'; pos_ip++ {
+		second_ip_byte[i] = val_ip[pos_ip]
+		s = append(s, second_ip_byte[i])
+		i++
+	}
+	first_ip_int, _ = strconv.Atoi(string(f))
+	second_ip_int, _ = strconv.Atoi(string(s))
+	x := first_ip_int*0x100 + second_ip_int //将首段与第二段看成一个4位16进制整数，通过该整数判断ip地址在哪个私有IP范围下
+	if x < 2560 {
+		return "n" //ip地址为0.0.0.0～10.0.0.0返回n
+	}
+	if x > 2560 && x < 44048 {
+		return "a" //10.0.0.0～172.16.0.0 返回a
+	}
+	if x > 44048 && x < 49320 {
+		return "b" //172.16.0.0～192.168.0.0 返回b
+	}
+	if x > 49320 {
+		return "c" //192.168.0.0以后的返回c
+	}
+	return "n"
 }
 
 func Ispravite(starting_ip string) bool {
@@ -315,6 +507,6 @@ OLDGW=$(netstat -rn | grep ^0\.0\.0\.0 | awk '{print $2}')
 var android_downscript_header string = `#!/bin/sh
 alias route='/system/xbin/busybox route'
 `
-var reg_comp_na string = `apnic\|(AU|BR|CK|CO|DE|ES|FJ|FM|GB|GN|GU|KE|KI|MH|MP|MU|NC|NE|NF|NI|NR|NU|NZ|PF|PG|PN|PW|SB|SE|SI|SN|TK|TO|TV|US|VU|WF|WS|ZA)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
+var reg_comp_na string = `apnic\|(MN|KP|KR|JP|VN|LA|KH|TH|MM|MY|SG|ID|BN|PH|TL|IN|BD|BT|NP|PK|LK|MV|SA|AE|TR|LB|IQ|IR|AF|CN)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
 var reg_comp_as string = `apnic\|(MN|KP|KR|JP|VN|LA|KH|TH|MM|MY|SG|ID|BN|PH|TL|IN|BD|BT|NP|PK|LK|MV|SA|AE|TR|LB|IQ|IR|AF)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
 var reg_comp_cn string = `apnic\|(CN)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
