@@ -185,7 +185,9 @@ func fetch_ip_data(area map[string]string) []apnicData {
 	br := bufio.NewReader(resp.Body) //resp.Body为io.Reader型，br为*Reader型
 	if region != "not-asia" {
 		var reg = regexp.MustCompile(area[region]) //设置正则表达是，符合｀｀内的表达式
-		for {                                      //死循环
+		var pro_starting_ip string
+		var pro_num_ip int
+		for { //死循环
 			line, isPrefix, err := br.ReadLine() //读一行文本，将内容赋给line
 			if err != nil {                      //如果有报错
 				if err != io.EOF { //如果错误信息不是读到文件末
@@ -206,10 +208,25 @@ func fetch_ip_data(area map[string]string) []apnicData {
 			if Ispravite(starting_ip) { //下面对抓取出来的ip地址进行判断是否为私有地址
 				continue
 			}
-			num_ip, _ := strconv.Atoi(matches[3])                              //ip的数量为第四个读出，即第三个子匹配项的内容，将其转为int形式赋给num_ip
-			imask := UintToIP(0xffffffff ^ uint32(num_ip-1))                   //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
-			imaskNum := 32 - int(math.Log2(float64(num_ip)))                   //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
-			results = append(results, apnicData{starting_ip, imask, imaskNum}) //将所得到的首地址、imask、imask数量构成一个apnicData结构加到results
+			if len(results) == 0 {
+				pro_num_ip, _ = strconv.Atoi(matches[3])
+				pro_starting_ip = starting_ip
+			}
+			num_ip, _ := strconv.Atoi(matches[3]) //ip的数量为第四个读出，即第三个子匹配项的内容，将其转为int形式赋给num_ip
+			tem_ip := changeIpToInt(pro_starting_ip) + uint32(pro_num_ip)
+			starting_ip_int := changeIpToInt(starting_ip)
+			if tem_ip == starting_ip_int {
+				imask := UintToIP(0xffffffff ^ uint32(num_ip+pro_num_ip-1)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
+				imaskNum := 32 - int(math.Log2(float64(num_ip+pro_num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
+				results[len(results)-1] = apnicData{pro_starting_ip, imask, imaskNum}
+				pro_num_ip = pro_num_ip + num_ip
+			} else {
+				imask := UintToIP(0xffffffff ^ uint32(num_ip-1))                   //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
+				imaskNum := 32 - int(math.Log2(float64(num_ip)))                   //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
+				results = append(results, apnicData{starting_ip, imask, imaskNum}) //将所得到的首地址、imask、imask数量构成一个apnicData结构加到results
+				pro_starting_ip = starting_ip
+				pro_num_ip = num_ip
+			}
 		}
 	} else if region == "not-asia" {
 		cur_StartIp := uint32(0)                   //当前的首地址
