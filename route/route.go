@@ -21,7 +21,7 @@ type apnicData struct { //建立了一个apnic结构，结构包括一个字符�
 }
 
 const (
-	classA_StartIp = uint32(184549376)
+	classA_StartIp = uint32(167772160)
 	classB_StartIp = uint32(2886729728)
 	classC_StartIp = uint32(3232235520)
 	classA_EndIp   = uint32(184549376)
@@ -33,6 +33,7 @@ var ( //全局变量   platform为字符串    metric为整型 region为字符�
 	platform string
 	metric   int
 	region   string
+	num_CIDR = [32]uint32{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216, 33554432, 67108864, 134217728, 268435456, 536870912, 1073741824, 2147483648}
 )
 
 func init() { //定义了一个有指定名字“p”，默认值为“openvpn”，用法说明标签为“Target.....”的string标签，参数&platform指向一个存储标签解析值的string变量
@@ -215,7 +216,7 @@ func fetch_ip_data(area map[string]string) []apnicData {
 			num_ip, _ := strconv.Atoi(matches[3]) //ip的数量为第四个读出，即第三个子匹配项的内容，将其转为int形式赋给num_ip
 			tem_ip := changeIpToInt(pro_starting_ip) + uint32(pro_num_ip)
 			starting_ip_int := changeIpToInt(starting_ip)
-			if tem_ip == starting_ip_int {
+			if needcombine(tem_ip, starting_ip_int, uint32(pro_num_ip+num_ip)) {
 				imask := UintToIP(0xffffffff ^ uint32(num_ip+pro_num_ip-1)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
 				imaskNum := 32 - int(math.Log2(float64(num_ip+pro_num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
 				results[len(results)-1] = apnicData{pro_starting_ip, imask, imaskNum}
@@ -273,29 +274,69 @@ func fetch_ip_data(area map[string]string) []apnicData {
 			if com_pro == 0 && com_cur == 1 { //对2个变量进行判定，如果出现一个变量在私有地址的右边，一个在左边则说明这次循环跨越私有段，对此进行额外的操作。
 				cur_EndIp = classA_StartIp
 				num_ip := cur_EndIp - cur_StartIp
-				starting_ip := getStartingIp(cur_StartIp)
-				imask := UintToIP(0xffffffff ^ uint32(num_ip-1)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
-				imaskNum := 32 - int(math.Log2(float64(num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
-				results = append(results, apnicData{starting_ip, imask, imaskNum})
-				cur_StartIp = classA_EndIp
+				if matchCIDR(num_ip) {
+					starting_ip := getStartingIp(cur_StartIp)
+					imask := UintToIP(0xffffffff ^ uint32(num_ip-1)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
+					imaskNum := 32 - int(math.Log2(float64(num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
+					results = append(results, apnicData{starting_ip, imask, imaskNum})
+					cur_StartIp = classA_EndIp
+				} else {
+					starting_ip := getStartingIp(cur_StartIp)
+					for {
+						c_num_ip := findMaxCIDR(num_ip)
+						num_ip = num_ip - c_num_ip
+						imask := UintToIP(0xffffffff ^ uint32(c_num_ip-1))
+						imaskNum := 32 - int(math.Log2(float64(c_num_ip)))
+						results = append(results, apnicData{starting_ip, imask, imaskNum})
+						starting_ip = getStartingIp(changeIpToInt(starting_ip) + c_num_ip)
+						if matchCIDR(num_ip) {
+							imask := UintToIP(0xffffffff ^ uint32(num_ip-1))
+							imaskNum := 32 - int(math.Log2(float64(num_ip)))
+							results = append(results, apnicData{starting_ip, imask, imaskNum})
+							cur_StartIp = classA_EndIp
+							break
+						}
+					}
+				}
 			}
 			if com_pro == 1 && com_cur == 2 {
 				cur_EndIp = classB_StartIp
 				num_ip := cur_EndIp - cur_StartIp
-				starting_ip := getStartingIp(cur_StartIp)
-				imask := UintToIP(0xffffffff ^ uint32(num_ip-1)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
-				imaskNum := 32 - int(math.Log2(float64(num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
-				results = append(results, apnicData{starting_ip, imask, imaskNum})
-				cur_StartIp = classB_EndIp
+				if matchCIDR(num_ip) {
+					starting_ip := getStartingIp(cur_StartIp)
+					imask := UintToIP(0xffffffff ^ uint32(num_ip-1)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
+					imaskNum := 32 - int(math.Log2(float64(num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
+					results = append(results, apnicData{starting_ip, imask, imaskNum})
+					cur_StartIp = classB_EndIp
+				}
 			}
 			if com_pro == 2 && com_cur == 3 {
 				cur_EndIp = classC_StartIp
 				num_ip := cur_EndIp - cur_StartIp
-				starting_ip := getStartingIp(cur_StartIp)
-				imask := UintToIP(0xffffffff ^ uint32(num_ip-2)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
-				imaskNum := 32 - int(math.Log2(float64(num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
-				results = append(results, apnicData{starting_ip, imask, imaskNum})
-				cur_StartIp = classC_EndIp
+				if matchCIDR(num_ip) {
+					starting_ip := getStartingIp(cur_StartIp)
+					imask := UintToIP(0xffffffff ^ uint32(num_ip-1)) //将ip数量－1，并于ffffffff相减。得到的结果放给函数UintToIP，返回结果给imask
+					imaskNum := 32 - int(math.Log2(float64(num_ip))) //将num_ip转为64位float进行Log2（）的运算，再转回int，用32去减，所得结果为imask数量
+					results = append(results, apnicData{starting_ip, imask, imaskNum})
+					cur_StartIp = classC_EndIp
+				} else {
+					starting_ip := getStartingIp(cur_StartIp)
+					for {
+						c_num_ip := findMaxCIDR(num_ip)
+						num_ip = num_ip - c_num_ip
+						imask := UintToIP(0xffffffff ^ uint32(c_num_ip-1))
+						imaskNum := 32 - int(math.Log2(float64(c_num_ip)))
+						results = append(results, apnicData{starting_ip, imask, imaskNum})
+						starting_ip = getStartingIp(changeIpToInt(starting_ip) + c_num_ip)
+						if matchCIDR(num_ip) {
+							imask := UintToIP(0xffffffff ^ uint32(num_ip-1))
+							imaskNum := 32 - int(math.Log2(float64(num_ip)))
+							results = append(results, apnicData{starting_ip, imask, imaskNum})
+							cur_StartIp = classC_EndIp
+							break
+						}
+					}
+				}
 			}
 			cur_EndIp = val_Ip
 			num_ip := cur_EndIp - cur_StartIp
@@ -303,21 +344,89 @@ func fetch_ip_data(area map[string]string) []apnicData {
 				com_pro = com_cur //本次的结果不保留，但是对上次循环地址进行更新
 				continue
 			}
-			starting_ip := getStartingIp(cur_StartIp)
-			imask := UintToIP(0xffffffff ^ uint32(num_ip-1))
-			imaskNum := 32 - int(math.Log2(float64(num_ip)))
-			results = append(results, apnicData{starting_ip, imask, imaskNum}) //将所得到的首地址、imask、imask数量构成一个apnicData结构加到results
-			com_pro = com_cur                                                  //循环结束时将上次循环的地址段更新，以此来和下次循环的地址段进行比较判定
+			if matchCIDR(num_ip) {
+				starting_ip := getStartingIp(cur_StartIp)
+				imask := UintToIP(0xffffffff ^ uint32(num_ip-1))
+				imaskNum := 32 - int(math.Log2(float64(num_ip)))
+				results = append(results, apnicData{starting_ip, imask, imaskNum})
+				com_pro = com_cur
+			} else {
+				starting_ip := getStartingIp(cur_StartIp)
+				for {
+					c_num_ip := findMaxCIDR(num_ip)
+					num_ip = num_ip - c_num_ip
+					imask := UintToIP(0xffffffff ^ uint32(c_num_ip-1))
+					imaskNum := 32 - int(math.Log2(float64(c_num_ip)))
+					results = append(results, apnicData{starting_ip, imask, imaskNum})
+					starting_ip = getStartingIp(changeIpToInt(starting_ip) + c_num_ip)
+					if matchCIDR(num_ip) {
+						imask := UintToIP(0xffffffff ^ uint32(num_ip-1))
+						imaskNum := 32 - int(math.Log2(float64(num_ip)))
+						results = append(results, apnicData{starting_ip, imask, imaskNum})
+						com_pro = com_cur
+						break
+					}
+				}
+			}
 		}
 		starting_ip := getStartingIp(last_Ip)
 		num_ip := 4294967295 - last_Ip - 1
-		imask := UintToIP(0xffffffff ^ uint32(num_ip-1))
-		imaskNum := 32 - int(math.Log2(float64(num_ip)))
-		results = append(results, apnicData{starting_ip, imask, imaskNum})
+		if matchCIDR(num_ip) {
+			imask := UintToIP(0xffffffff ^ uint32(num_ip-1))
+			imaskNum := 32 - int(math.Log2(float64(num_ip)))
+			results = append(results, apnicData{starting_ip, imask, imaskNum})
+		} else {
+			for {
+				c_num_ip := findMaxCIDR(num_ip)
+				num_ip = num_ip - c_num_ip
+				imask := UintToIP(0xffffffff ^ uint32(c_num_ip-1))
+				imaskNum := 32 - int(math.Log2(float64(c_num_ip)))
+				results = append(results, apnicData{starting_ip, imask, imaskNum})
+				starting_ip = getStartingIp(changeIpToInt(starting_ip) + c_num_ip)
+				if matchCIDR(num_ip) {
+					imask := UintToIP(0xffffffff ^ uint32(num_ip-1))
+					imaskNum := 32 - int(math.Log2(float64(num_ip)))
+					results = append(results, apnicData{starting_ip, imask, imaskNum})
+					break
+				}
+			}
+		}
 	}
-	return results //将最后得到的apnicData结构数组results返回
+	return results
 }
 
+func findMaxCIDR(num_ip uint32) uint32 {
+	if num_ip == 0 {
+		return 0
+	}
+	for i, v := range num_CIDR {
+		if v > num_ip {
+			return num_CIDR[i-1]
+		}
+	}
+	return num_CIDR[31]
+}
+func matchCIDR(num_ip uint32) bool {
+	for _, v := range num_CIDR {
+		if num_ip == v {
+			return true
+		}
+	}
+	return false
+}
+
+func needcombine(tem_ip, starting_ip_int, num_ip uint32) bool {
+	need := false
+	if tem_ip == starting_ip_int {
+		for _, v := range num_CIDR {
+			if num_ip == v {
+				need = true
+			}
+		}
+		return need
+	}
+	return false
+}
 func getStartingIp(cur_StartIp uint32) string {
 	first_int := int(cur_StartIp / uint32(0x1000000))
 	second_int := int((cur_StartIp - uint32(first_int*0x1000000)) / uint32(0x10000))
@@ -382,38 +491,18 @@ func changeIpToInt(starting_ip string) uint32 { //将ip地址由点分十进制�
 	return val_Ip
 }
 func privateclass(starting_ip string) string { //ip地址为0.0.0.0～10.0.0.0返回n
-	val_ip := []byte(starting_ip) //当前位置ip的值,首先将ip地址转为［］byte型
-	pos_ip := 0                   //循环取出ip地址每一段时所在的位置
-	first_ip_byte := [3]byte{}    //第一段ip地址的值（［］byte）
-	second_ip_byte := [3]byte{}   //第二段ip地址的值（［］byte）
-	var first_ip_int int          //第一段ip地址的值（int）
-	var second_ip_int int         //第二段ip地址的值（int）
-	var f []byte
-	var s []byte
-	for i := 0; val_ip[pos_ip] >= '0' && val_ip[pos_ip] <= '9'; pos_ip++ {
-		first_ip_byte[i] = val_ip[pos_ip]
-		f = append(f, first_ip_byte[i])
-		i++
-	}
-	pos_ip++
-	for i := 0; val_ip[pos_ip] >= '0' && val_ip[pos_ip] <= '9'; pos_ip++ {
-		second_ip_byte[i] = val_ip[pos_ip]
-		s = append(s, second_ip_byte[i])
-		i++
-	}
-	first_ip_int, _ = strconv.Atoi(string(f))
-	second_ip_int, _ = strconv.Atoi(string(s))
-	x := first_ip_int*0x100 + second_ip_int //将首段与第二段看成一个4位16进制整数，通过该整数判断ip地址在哪个私有IP范围下
-	if x < 2560 {
+
+	x := changeIpToInt(starting_ip) //将首段与第二段看成一个4位16进制整数，通过该整数判断ip地址在哪个私有IP范围下
+	if x < classA_StartIp {
 		return "n" //ip地址为0.0.0.0～10.0.0.0返回n
 	}
-	if x > 2560 && x < 44048 {
+	if x > classA_StartIp && x < classB_StartIp {
 		return "a" //10.0.0.0～172.16.0.0 返回a
 	}
-	if x > 44048 && x < 49320 {
+	if x > classB_StartIp && x < classC_StartIp {
 		return "b" //172.16.0.0～192.168.0.0 返回b
 	}
-	if x > 49320 {
+	if x > classC_StartIp {
 		return "c" //192.168.0.0以后的返回c
 	}
 	return "n"
@@ -524,6 +613,6 @@ OLDGW=$(netstat -rn | grep ^0\.0\.0\.0 | awk '{print $2}')
 var android_downscript_header string = `#!/bin/sh
 alias route='/system/xbin/busybox route'
 `
-var reg_comp_na string = `apnic\|(MN|KP|KR|JP|VN|LA|KH|TH|MM|MY|SG|ID|BN|PH|TL|IN|BD|BT|NP|PK|LK|MV|SA|AE|TR|LB|IQ|IR|AF|CN)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
-var reg_comp_as string = `apnic\|(MN|KP|KR|JP|VN|LA|KH|TH|MM|MY|SG|ID|BN|PH|TL|IN|BD|BT|NP|PK|LK|MV|SA|AE|TR|LB|IQ|IR|AF)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
+var reg_comp_na string = `apnic\|(MN|KP|KR|JP|VN|LA|KH|TH|MM|MY|SG|ID|BN|PH|TL|IN|BD|BT|NP|PK|LK|MV|SA|AE|TR|LB|IQ|IR|AF|TW|CN)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
+var reg_comp_as string = `apnic\|(MN|KP|KR|JP|VN|LA|KH|TH|MM|MY|SG|ID|BN|PH|TL|IN|BD|BT|NP|PK|LK|MV|SA|AE|TR|LB|IQ|IR|AF|TW)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
 var reg_comp_cn string = `apnic\|(CN)+\|ipv4\|([0-9|\.]{1,15})\|(\d+)\|(\d+)\|([a-z]+)`
