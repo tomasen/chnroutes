@@ -8,43 +8,38 @@ import (
 )
 
 func TestIspravite(t *testing.T) {
-	class_a := "10.1.1.5"
-	class_b := "172.25.255.1"
-	class_c := "192.168.65.5"
+	classA := "10.1.1.5"
+	classB := "172.25.255.1"
+	classC := "192.168.65.5"
 	pub := "1.0.5.255"
-	if Ispravite(class_a) == false {
-		t.Log("class A:", class_a, "should be pravite")
+	if !Ispravite(classA) {
+		t.Log("class A:", classA, "should be pravite")
 		t.Fail()
 	}
-	if Ispravite(class_b) == false {
-		t.Log("class B:", class_b, "should be pravite")
+	if !Ispravite(classB) {
+		t.Log("class B:", classB, "should be pravite")
 		t.Fail()
 	}
-	if Ispravite(class_c) == false {
-		t.Log("class C:", class_c, "should be pravite")
+	if !Ispravite(classC) {
+		t.Log("class C:", classC, "should be pravite")
 		t.Fail()
 	}
-	if Ispravite(pub) == true {
+	if Ispravite(pub) {
 		t.Log("pub:", pub, "should be public")
 		t.Fail()
 	}
 }
 
-func TestIsNotInAsia(t *testing.T) {
-	a := "apnic|CN|ipv4|1.0.8.0|2048|20110412|allocated"
+func TestIsInAsia(t *testing.T) {
 	b := "apnic|JP|ipv4|1.0.16.0|4096|20110412|allocated"
 	c := "apnic|AU|ipv4|1.0.0.0|256|20110811|assigned"
-	var reg = regexp.MustCompile(reg_comp)
-	matches := reg.FindStringSubmatch(a)
-	if matches != nil {
-		t.Fail()
-	}
-	matches = reg.FindStringSubmatch(b)
-	if matches != nil {
+	var reg = regexp.MustCompile(reg_comp_as)
+	matches := reg.FindStringSubmatch(b)
+	if matches == nil {
 		t.Fail()
 	}
 	matches = reg.FindStringSubmatch(c)
-	if matches == nil {
+	if matches != nil {
 		t.Fail()
 	}
 }
