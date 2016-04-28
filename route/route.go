@@ -259,84 +259,18 @@ func fetchIPData(area map[string]string) []apnicData {
 				continue
 			}
 			fetchIP := matches[2]
-			switch privateclass(fetchIP) {
-			case "n": //classA之前
-				comCur = 0
-			case "a": //classA之后
-				comCur = 1
-			case "b": //classB之后
-				comCur = 2
-			case "c": //classC之后
-				comCur = 3
-			}
+			comCur = privateclass(fetchIP)
 			valIP := changeIPToInt(fetchIP)
 			x, _ := strconv.Atoi(matches[3])
 			lastIP = valIP + uint32(x)      //该变量为循环时抓去到的亚洲IP首地址＋ip数，为下次循环时的开始地址
 			if comPro == 0 && comCur == 1 { //对2个变量进行判定，如果出现一个变量在私有地址的右边，一个在左边则说明这次循环跨越私有段，对此进行额外的操作。
-				curEndIP = classAStartIP
-				numIP := curEndIP - curStartIP
-				if matchCIDR(numIP) {
-					startingIP := getStartingIP(curStartIP)
-					results = append(results, getApnicData(startingIP, numIP))
-					curStartIP = classAEndIP
-				} else {
-					startingIP := getStartingIP(curStartIP)
-					for {
-						cNumIP := findMaxCIDR(numIP)
-						numIP = numIP - cNumIP
-						results = append(results, getApnicData(startingIP, cNumIP))
-						startingIP = getStartingIP(changeIPToInt(startingIP) + cNumIP)
-						if matchCIDR(numIP) {
-							results = append(results, getApnicData(startingIP, numIP))
-							curStartIP = classAEndIP
-							break
-						}
-					}
-				}
+				results, curStartIP, curEndIP, _, _ = getPrivateResult(curStartIP, classAStartIP, results, "A", 0, 0)
 			}
 			if comPro == 1 && comCur == 2 {
-				curEndIP = classBStartIP
-				numIP := curEndIP - curStartIP
-				if matchCIDR(numIP) {
-					startingIP := getStartingIP(curStartIP)
-					results = append(results, getApnicData(startingIP, numIP))
-					curStartIP = classBEndIP
-				} else {
-					startingIP := getStartingIP(curStartIP)
-					for {
-						cNumIP := findMaxCIDR(numIP)
-						numIP = numIP - cNumIP
-						results = append(results, getApnicData(startingIP, cNumIP))
-						startingIP = getStartingIP(changeIPToInt(startingIP) + cNumIP)
-						if matchCIDR(numIP) {
-							results = append(results, getApnicData(startingIP, numIP))
-							curStartIP = classBEndIP
-							break
-						}
-					}
-				}
+				results, curStartIP, curEndIP, _, _ = getPrivateResult(curStartIP, classBStartIP, results, "B", 0, 0)
 			}
 			if comPro == 2 && comCur == 3 {
-				curEndIP = classCStartIP
-				numIP := curEndIP - curStartIP
-				if matchCIDR(numIP) {
-					startingIP := getStartingIP(curStartIP)
-					results = append(results, getApnicData(startingIP, numIP))
-					curStartIP = classCEndIP
-				} else {
-					startingIP := getStartingIP(curStartIP)
-					for {
-						cNumIP := findMaxCIDR(numIP)
-						numIP = numIP - cNumIP
-						results = append(results, getApnicData(startingIP, cNumIP))
-						startingIP = getStartingIP(changeIPToInt(startingIP) + cNumIP)
-						if matchCIDR(numIP) {
-							results = append(results, getApnicData(startingIP, numIP))
-							curStartIP = classCEndIP
-							break
-						}
-					}
-				}
+				results, curStartIP, curEndIP, _, _ = getPrivateResult(curStartIP, classCStartIP, results, "C", 0, 0)
 			}
 			curEndIP = valIP
 			numIP := curEndIP - curStartIP
@@ -344,24 +278,7 @@ func fetchIPData(area map[string]string) []apnicData {
 				comPro = comCur //本次的结果不保留，但是对上次循环地址进行更新
 				continue
 			}
-			if matchCIDR(numIP) {
-				startingIP := getStartingIP(curStartIP)
-				results = append(results, getApnicData(startingIP, numIP))
-				comPro = comCur
-			} else {
-				startingIP := getStartingIP(curStartIP)
-				for {
-					cNumIP := findMaxCIDR(numIP)
-					numIP = numIP - cNumIP
-					results = append(results, getApnicData(startingIP, cNumIP))
-					startingIP = getStartingIP(changeIPToInt(startingIP) + cNumIP)
-					if matchCIDR(numIP) {
-						results = append(results, getApnicData(startingIP, numIP))
-						comPro = comCur
-						break
-					}
-				}
-			}
+			results, curStartIP, curEndIP, comPro, comCur = getPrivateResult(curStartIP, valIP, results, "N", comPro, comCur)
 		}
 		startingIP := getStartingIP(lastIP)
 		numIP := 4294967295 - lastIP - 1
@@ -381,6 +298,47 @@ func fetchIPData(area map[string]string) []apnicData {
 		}
 	}
 	return results
+}
+
+func getPrivateResult(curStartIP uint32, valIP uint32, results []apnicData, class string, comPro int, comCur int) ([]apnicData, uint32, uint32, int, int) {
+	var classEndIP uint32
+	switch class {
+	case "A":
+		classEndIP = classAEndIP
+	case "B":
+		classEndIP = classBEndIP
+	case "C":
+		classEndIP = classCEndIP
+	}
+	curEndIP := valIP
+	numIP := curEndIP - curStartIP
+	if matchCIDR(numIP) {
+		startingIP := getStartingIP(curStartIP)
+		results = append(results, getApnicData(startingIP, numIP))
+		if class != "N" {
+			curStartIP = classEndIP
+		} else {
+			comPro = comCur
+		}
+	} else {
+		startingIP := getStartingIP(curStartIP)
+		for {
+			cNumIP := findMaxCIDR(numIP)
+			numIP = numIP - cNumIP
+			results = append(results, getApnicData(startingIP, cNumIP))
+			startingIP = getStartingIP(changeIPToInt(startingIP) + cNumIP)
+			if matchCIDR(numIP) {
+				results = append(results, getApnicData(startingIP, numIP))
+				if class != "N" {
+					curStartIP = classEndIP
+				} else {
+					comPro = comCur
+				}
+				break
+			}
+		}
+	}
+	return results, curStartIP, curEndIP, comPro, comCur
 }
 
 func findMaxCIDR(numIP uint32) uint32 {
@@ -484,19 +442,19 @@ func changeIPToInt(startingIP string) uint32 { //将ip地址由点分十进制�
 	ip = uint32(firstIPInt*0x1000000 + secondIPInt*0x10000 + thirdIPInt*0x100 + fourthIPInt)
 	return ip
 }
-func privateclass(startingIP string) string { //ip地址为0.0.0.0～10.0.0.0返回n
+func privateclass(startingIP string) int { //ip地址为0.0.0.0～10.0.0.0返回n
 
 	x := changeIPToInt(startingIP) //将首段与第二段看成一个4位16进制整数，通过该整数判断ip地址在哪个私有IP范围下
 	if x > classAStartIP && x < classBStartIP {
-		return "a" //10.0.0.0～172.16.0.0 返回a
+		return 1 //10.0.0.0～172.16.0.0 返回a
 	}
 	if x > classBStartIP && x < classCStartIP {
-		return "b" //172.16.0.0～192.168.0.0 返回b
+		return 2 //172.16.0.0～192.168.0.0 返回b
 	}
 	if x > classCStartIP {
-		return "c" //192.168.0.0以后的返回c
+		return 3 //192.168.0.0以后的返回c
 	}
-	return "n"
+	return 0
 }
 
 func isPravite(startingIP string) bool {
