@@ -27,6 +27,7 @@ const (
 	classAEndIP   = uint32(0xB000000)
 	classBEndIP   = uint32(0xAC200000)
 	classCEndIP   = uint32(0xC0A90000)
+	constN        = "N"
 )
 
 var ( //全局变量   platform为字符串    metric为整型 region为字符串
@@ -176,6 +177,50 @@ func generateAndroid(data []apnicData) {
 	fmt.Println("Old school way to call up/down script from openvpn client. use the regular openvpn 2.1 method to add routes if it's possible")
 }
 
+func getResultsExceptNotAsia(resp *http.Response, br *bufio.Reader, area map[string]string) (results []apnicData) {
+	var reg = regexp.MustCompile(area[region]) //设置正则表达是，符合｀｀内的表达式
+	var proStartingIP string
+	var proNumIP int
+	for { //死循环
+		line, isPrefix, err := br.ReadLine() //读一行文本，将内容赋给line
+		if err != nil {                      //如果有报错
+			if err != io.EOF { //如果错误信息不是读到文件末
+				fmt.Println(err.Error()) //输出错误信息
+				os.Exit(-1)              //退出
+			}
+			break //如果是读到尾部，退出循环
+		}
+		if isPrefix { //如果一行内容超出上限
+			fmt.Println("You should not see this!") //输出“你不该看到这个”
+			return results                          //返回results
+		}
+		matches := reg.FindStringSubmatch(string(line)) //matches是一个字符串数组，返回了符合之前正则表达式里面的完整匹配项和子匹配项（每个（）所符合的内容）
+		if len(matches) != 6 {                          //如果matches的长度不等于6则跳过本次循环
+			continue
+		}
+		startingIP := matches[2]   //首地址为第三个读出的内容，即第二个子匹配项的ip地址，以字符串形式赋给startingIP
+		if isPravite(startingIP) { //下面对抓取出来的ip地址进行判断是否为私有地址
+			continue
+		}
+		if len(results) == 0 {
+			proNumIP, _ = strconv.Atoi(matches[3])
+			proStartingIP = startingIP
+		}
+		numIP, _ := strconv.Atoi(matches[3]) //ip的数量为第四个读出，即第三个子匹配项的内容，将其转为int形式赋给numIP
+		temIP := changeIPToInt(proStartingIP) + uint32(proNumIP)
+		startingIPInt := changeIPToInt(startingIP)
+		if needcombine(temIP, startingIPInt, uint32(proNumIP+numIP)) {
+			results[len(results)-1] = getApnicData(proStartingIP, uint32(numIP+proNumIP))
+			proNumIP = proNumIP + numIP
+		} else {
+			results = append(results, getApnicData(startingIP, uint32(numIP))) //将所得到的首地址、imask、imask数量构成一个apnicData结构加到results
+			proStartingIP = startingIP
+			proNumIP = numIP
+		}
+	}
+	return results
+}
+
 func fetchIPData(area map[string]string) []apnicData {
 	// fetch data from apnic
 	fmt.Println("Fetching data from apnic.net, it might take a few minutes, please wait...") //输出等待
@@ -190,110 +235,96 @@ func fetchIPData(area map[string]string) []apnicData {
 	//正则表达式：将( 和 ) 之间的表达式定义为“组”（group），并且将匹配这个表达式的字符保存到一个临时区域（一个正则表达式中最多可以保存9个），它们可以用 \1 到\9 的符号来引用。
 	br := bufio.NewReader(resp.Body) //resp.Body为io.Reader型，br为*Reader型
 	if region != "not-asia" {
-		var reg = regexp.MustCompile(area[region]) //设置正则表达是，符合｀｀内的表达式
-		var proStartingIP string
-		var proNumIP int
-		for { //死循环
-			line, isPrefix, err := br.ReadLine() //读一行文本，将内容赋给line
-			if err != nil {                      //如果有报错
-				if err != io.EOF { //如果错误信息不是读到文件末
-					fmt.Println(err.Error()) //输出错误信息
-					os.Exit(-1)              //退出
-				}
-				break //如果是读到尾部，退出循环
+		results = getResultsExceptNotAsia(resp, br, area)
+		return results
+	}
+	curStartIP := uint32(0)                    //当前的首地址
+	curEndIP := uint32(0)                      //当前的末地址
+	lastIP := uint32(0)                        //由于最后一次循环是由搜到的Ip作为末地址，并没有遍历0.0.0.0～255.255.255.255，所以设置一个变量用于记录循环时最后一个搜到Ip的末地址，以此来进行遍历
+	var reg = regexp.MustCompile(area[region]) //设置正则表达是，符合｀｀内的表达式
+	comPro := 0                                //上次循环时所处的地址段,0表示在10.0.0.0之前，1表示在10.0.0.0和172.16.0.0之间，2表示在172.16.0.0和192.168.0.0之间，4表示在192.168.0.0之后
+	comCur := 0                                //本次循环时首地址的地址段
+	for {
+		curStartIP = lastIP
+		line, isPrefix, err := br.ReadLine()
+		if err != nil {
+			if err != io.EOF {
+				fmt.Println(err.Error())
+				os.Exit(-1)
 			}
-			if isPrefix { //如果一行内容超出上限
-				fmt.Println("You should not see this!") //输出“你不该看到这个”
-				return results                          //返回results
-			}
-			matches := reg.FindStringSubmatch(string(line)) //matches是一个字符串数组，返回了符合之前正则表达式里面的完整匹配项和子匹配项（每个（）所符合的内容）
-			if len(matches) != 6 {                          //如果matches的长度不等于6则跳过本次循环
-				continue
-			}
-			startingIP := matches[2]   //首地址为第三个读出的内容，即第二个子匹配项的ip地址，以字符串形式赋给startingIP
-			if isPravite(startingIP) { //下面对抓取出来的ip地址进行判断是否为私有地址
-				continue
-			}
-			if len(results) == 0 {
-				proNumIP, _ = strconv.Atoi(matches[3])
-				proStartingIP = startingIP
-			}
-			numIP, _ := strconv.Atoi(matches[3]) //ip的数量为第四个读出，即第三个子匹配项的内容，将其转为int形式赋给numIP
-			temIP := changeIPToInt(proStartingIP) + uint32(proNumIP)
-			startingIPInt := changeIPToInt(startingIP)
-			if needcombine(temIP, startingIPInt, uint32(proNumIP+numIP)) {
-				results[len(results)-1] = getApnicData(proStartingIP, uint32(numIP+proNumIP))
-				proNumIP = proNumIP + numIP
-			} else {
-				results = append(results, getApnicData(startingIP, uint32(numIP))) //将所得到的首地址、imask、imask数量构成一个apnicData结构加到results
-				proStartingIP = startingIP
-				proNumIP = numIP
-			}
+			break
 		}
-	} else if region == "not-asia" {
-		curStartIP := uint32(0)                    //当前的首地址
-		curEndIP := uint32(0)                      //当前的末地址
-		lastIP := uint32(0)                        //由于最后一次循环是由搜到的Ip作为末地址，并没有遍历0.0.0.0～255.255.255.255，所以设置一个变量用于记录循环时最后一个搜到Ip的末地址，以此来进行遍历
-		var reg = regexp.MustCompile(area[region]) //设置正则表达是，符合｀｀内的表达式
-		comPro := 0                                //上次循环时所处的地址段,0表示在10.0.0.0之前，1表示在10.0.0.0和172.16.0.0之间，2表示在172.16.0.0和192.168.0.0之间，4表示在192.168.0.0之后
-		comCur := 0                                //本次循环时首地址的地址段
+		if isPrefix {
+			fmt.Println("You should not see this!")
+			return results
+		}
+		matches := reg.FindStringSubmatch(string(line)) //not-asia的匹配项为not-asia
+		if judge(matches) {
+			continue
+		}
+		fetchIP := matches[2]
+		comCur = privateclass(fetchIP)
+		valIP := changeIPToInt(fetchIP)
+		x, _ := strconv.Atoi(matches[3])
+		lastIP = valIP + uint32(x) //该变量为循环时抓去到的亚洲IP首地址＋ip数，为下次循环时的开始地址
+		classStartIP, class := getClass(comPro, comCur)
+		if class != constN { //对2个变量进行判定，如果出现一个变量在私有地址的右边，一个在左边则说明这次循环跨越私有段，对此进行额外的操作。
+			results, curStartIP, curEndIP, _, _ = getPrivateResult(curStartIP, classStartIP, results, class, 0, 0)
+		}
+		curEndIP = valIP
+		numIP := curEndIP - curStartIP
+		if numIP == 0 { //如果相邻2次读取的IP连续，会导致减法后保留一个ip_num为0的无用项，所以跳过本次循环
+			comPro = comCur //本次的结果不保留，但是对上次循环地址进行更新
+			continue
+		}
+		results, curStartIP, curEndIP, comPro, comCur = getPrivateResult(curStartIP, valIP, results, constN, comPro, comCur)
+	}
+	results = lastDeal(lastIP, results)
+	return results
+}
+
+func judge(matches []string) bool {
+	if len(matches) != 6 {
+		return true
+	}
+	if isPravite(matches[2]) { //下面对抓取出来的ip地址进行判断是否为私有地址，因为对跨越私有段有额外处理，所以依旧进行该判定
+		return true
+	}
+	return false
+}
+
+func getClass(comPro int, comCur int) (uint32, string) {
+	class := constN
+	var classStartIP uint32
+	if comPro == 0 && comCur == 1 { //对2个变量进行判定，如果出现一个变量在私有地址的右边，一个在左边则说明这次循环跨越私有段，对此进行额外的操作。
+		class = "A"
+		classStartIP = classAStartIP
+	}
+	if comPro == 1 && comCur == 2 {
+		class = "B"
+		classStartIP = classBStartIP
+	}
+	if comPro == 2 && comCur == 3 {
+		class = "C"
+		classStartIP = classCStartIP
+	}
+	return classStartIP, class
+}
+
+func lastDeal(lastIP uint32, results []apnicData) []apnicData {
+	startingIP := getStartingIP(lastIP)
+	numIP := 0xFFFFFFFF - lastIP + 1
+	if matchCIDR(numIP) {
+		results = append(results, getApnicData(startingIP, numIP))
+	} else {
 		for {
-			curStartIP = lastIP
-			line, isPrefix, err := br.ReadLine()
-			if err != nil {
-				if err != io.EOF {
-					fmt.Println(err.Error())
-					os.Exit(-1)
-				}
+			cNumIP := findMaxCIDR(numIP)
+			numIP = numIP - cNumIP
+			results = append(results, getApnicData(startingIP, cNumIP))
+			startingIP = getStartingIP(changeIPToInt(startingIP) + cNumIP)
+			if matchCIDR(numIP) {
+				results = append(results, getApnicData(startingIP, numIP))
 				break
-			}
-			if isPrefix {
-				fmt.Println("You should not see this!")
-				return results
-			}
-			matches := reg.FindStringSubmatch(string(line)) //not-asia的匹配项为not-asia
-			if len(matches) != 6 {
-				continue
-			}
-			if isPravite(matches[2]) { //下面对抓取出来的ip地址进行判断是否为私有地址，因为对跨越私有段有额外处理，所以依旧进行该判定
-				continue
-			}
-			fetchIP := matches[2]
-			comCur = privateclass(fetchIP)
-			valIP := changeIPToInt(fetchIP)
-			x, _ := strconv.Atoi(matches[3])
-			lastIP = valIP + uint32(x)      //该变量为循环时抓去到的亚洲IP首地址＋ip数，为下次循环时的开始地址
-			if comPro == 0 && comCur == 1 { //对2个变量进行判定，如果出现一个变量在私有地址的右边，一个在左边则说明这次循环跨越私有段，对此进行额外的操作。
-				results, curStartIP, curEndIP, _, _ = getPrivateResult(curStartIP, classAStartIP, results, "A", 0, 0)
-			}
-			if comPro == 1 && comCur == 2 {
-				results, curStartIP, curEndIP, _, _ = getPrivateResult(curStartIP, classBStartIP, results, "B", 0, 0)
-			}
-			if comPro == 2 && comCur == 3 {
-				results, curStartIP, curEndIP, _, _ = getPrivateResult(curStartIP, classCStartIP, results, "C", 0, 0)
-			}
-			curEndIP = valIP
-			numIP := curEndIP - curStartIP
-			if numIP == 0 { //如果相邻2次读取的IP连续，会导致减法后保留一个ip_num为0的无用项，所以跳过本次循环
-				comPro = comCur //本次的结果不保留，但是对上次循环地址进行更新
-				continue
-			}
-			results, curStartIP, curEndIP, comPro, comCur = getPrivateResult(curStartIP, valIP, results, "N", comPro, comCur)
-		}
-		startingIP := getStartingIP(lastIP)
-		numIP := 4294967295 - lastIP - 1
-		if matchCIDR(numIP) {
-			results = append(results, getApnicData(startingIP, numIP))
-		} else {
-			for {
-				cNumIP := findMaxCIDR(numIP)
-				numIP = numIP - cNumIP
-				results = append(results, getApnicData(startingIP, cNumIP))
-				startingIP = getStartingIP(changeIPToInt(startingIP) + cNumIP)
-				if matchCIDR(numIP) {
-					results = append(results, getApnicData(startingIP, numIP))
-					break
-				}
 			}
 		}
 	}
@@ -315,7 +346,7 @@ func getPrivateResult(curStartIP uint32, valIP uint32, results []apnicData, clas
 	if matchCIDR(numIP) {
 		startingIP := getStartingIP(curStartIP)
 		results = append(results, getApnicData(startingIP, numIP))
-		if class != "N" {
+		if class != constN {
 			curStartIP = classEndIP
 		} else {
 			comPro = comCur
@@ -329,7 +360,7 @@ func getPrivateResult(curStartIP uint32, valIP uint32, results []apnicData, clas
 			startingIP = getStartingIP(changeIPToInt(startingIP) + cNumIP)
 			if matchCIDR(numIP) {
 				results = append(results, getApnicData(startingIP, numIP))
-				if class != "N" {
+				if class != constN {
 					curStartIP = classEndIP
 				} else {
 					comPro = comCur
